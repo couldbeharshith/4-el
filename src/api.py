@@ -1,0 +1,327 @@
+"""
+api.py — Unified Disaster Relief Backend API
+Integrates Layer 1 (Data Verification) + Layer 2 (Allocator) + Public Dashboard APIs
+"""
+
+import logging
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpx").propagate = False
+
+import os
+from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# Data/Allocator layers
+from .agent import analyze_disaster, create_disaster_agent
+from .allocator import run_allocator_agent
+
+# Database stores
+from .stores.incidents import create_incident, get_incident_by_id
+from .stores.need_cards import (
+    create_need_card,
+    get_all_need_cards,
+    approve_need_card,
+    reject_need_card,
+    take_up_need_card,
+)
+
+# Setup
+load_dotenv()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
+logger = logging.getLogger("API")
+
+
+# ── Request/Response Models ──────────────────────────────────────────────────
+
+
+class NeedCardResponse(BaseModel):
+    id: str
+    incident_id: str
+    type: str
+    item: str
+    qty: float
+    note: str | None
+    explanation: str
+    done_by: str | None
+    fulfilled: bool
+    pending_approval: bool
+    show_pd: bool
+
+
+class NeedCardDecisionRequest(BaseModel):
+    need_card_id: str
+    approved: bool
+
+
+class NeedCardTakeUpRequest(BaseModel):
+    id: str
+    name: str
+    ph_num: int
+    email: str
+
+
+class IncidentNewRequest(BaseModel):
+    incident_name: str
+
+
+# ── Lifespan 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize on startup."""
+    logger.info("=" * 80)
+    logger.info("DISASTER RELIEF UNIFIED BACKEND - STARTING")
+    logger.info("=" * 80)
+    logger.info("Layer 1 (Data Verification) + Layer 2 (Allocator) + Public Dashboard")
+    yield
+    logger.info("Backend shutdown complete")
+
+
+# ── FastAPI App 
+
+app = FastAPI(
+    title="Disaster Relief Unified Backend",
+    description="Integrates incident verification, resource allocation, and public dashboard",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Helper functions ─────────────────────────────────────────────────────────
+
+
+def process_incident(incident_json: dict) -> dict:
+    """
+    Process a single incident through Layer 1 + Layer 2.
+
+    1. Create incident record
+    2. Call Layer 2 allocator with the incident
+    3. Create need-cards from allocations
+    """
+    incident_id = incident_json.get("incident_id", "UNKNOWN")
+    incident_type = incident_json.get("incident", {}).get("type", "UNKNOWN")
+    location = incident_json.get("incident", {}).get("location", "UNKNOWN")
+    title = incident_json.get("incident", {}).get("title")
+    severity = incident_json.get("incident", {}).get("severity", 5)
+    summary = incident_json.get("incident", {}).get("summary")
+
+    logger.info(f"Processing incident: {incident_id}")
+
+    # 1. Create incident record
+    try:
+        create_incident(
+            incident_id=incident_id,
+            incident_type=incident_type,
+            location=location,
+            title=title,
+            severity=severity,
+            summary=summary,
+        )
+        logger.info(f"Incident record created: {incident_id}")
+    except Exception as e:
+        logger.error(f"Failed to create incident record: {e}")
+        raise
+
+    # 2. Prepare context for Layer 2
+    context_packet = {
+        "incident_id": incident_id,
+        "incident": incident_json.get("incident", {}),
+        "needs_summary": f"Incident: {title}\n{summary}",
+        "map_description": "Map data available",
+    }
+
+    # 3. Call Layer 2 allocator
+    try:
+        allocations_result = run_allocator_agent(context_packet)
+        allocations = allocations_result.get("allocations", [])
+        logger.info(f"Allocator returned {len(allocations)} allocations")
+    except Exception as e:
+        logger.error(f"Allocator failed: {e}")
+        raise
+
+    # 4. Create need-cards from allocations
+    need_cards = []
+    for allocation in allocations:
+        tool_name = allocation.get("tool_name", "unknown")
+        card_type = allocation.get("type", tool_name)
+        item = allocation.get("item", "unknown")
+        qty = allocation.get("quantity", 0)
+        note = allocation.get("note")
+        explanation = allocation.get("explanation", "")
+        status = allocation.get("status", "pending")
+
+        # Determine fulfilled status and done_by
+        fulfilled = status == "executed"
+        done_by = "us" if fulfilled else None
+        pending_approval = status == "pending_approval"
+
+        try:
+            card = create_need_card(
+                incident_id=incident_id,
+                card_type=card_type,
+                item=item,
+                qty=qty,
+                explanation=explanation,
+                note=note,
+                fulfilled=fulfilled,
+                done_by=done_by,
+                pending_approval=pending_approval,
+            )
+            need_cards.append(card)
+            logger.info(f"Created need-card: {card_type} × {qty}")
+        except Exception as e:
+            logger.error(f"Failed to create need-card: {e}")
+            # Continue with other cards
+
+    return {
+        "incident_id": incident_id,
+        "need_cards_created": len(need_cards),
+        "allocations_status": "completed",
+    }
+
+
+# ── Endpoints ──
+
+
+@app.get("/need-cards", response_model=list[dict])
+async def get_need_cards():
+    """
+    GET /need-cards
+    Fetch all need-cards for the public dashboard.
+    """
+    try:
+        cards = get_all_need_cards()
+        logger.info(f"Fetched {len(cards)} need-cards")
+        return cards
+    except Exception as e:
+        logger.error(f"Failed to fetch need-cards: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/need-cards/decision")
+async def decide_need_card(request: NeedCardDecisionRequest):
+    """
+    POST /need-cards/decision
+    Admin approves or rejects a pending need-card.
+
+    {
+        "need_card_id": "...",
+        "approved": true/false
+    }
+    """
+    try:
+        if request.approved:
+            card = approve_need_card(request.need_card_id)
+            logger.info(f"Approved need-card: {request.need_card_id}")
+            return {
+                "status": "approved",
+                "need_card_id": request.need_card_id,
+                "card": card,
+            }
+        else:
+            card = reject_need_card(request.need_card_id)
+            logger.info(f"Rejected need-card: {request.need_card_id}")
+            return {
+                "status": "rejected",
+                "need_card_id": request.need_card_id,
+                "card": card,
+            }
+    except Exception as e:
+        logger.error(f"Decision failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/need-cards/take-up")
+async def take_up_need_card(request: NeedCardTakeUpRequest):
+    """
+    POST /need-cards/take-up
+    Volunteer takes up a need-card and commits to fulfill it.
+
+    {
+        "id": "need-card-id",
+        "name": "Volunteer Name",
+        "ph_num": 9876543210,
+        "email": "volunteer@example.com"
+    }
+    """
+    try:
+        card = take_up_need_card(request.id, request.name)
+        logger.info(f"Volunteer {request.name} took up need-card {request.id}")
+        return {
+            "status": "taken_up",
+            "need_card_id": request.id,
+            "volunteer_name": request.name,
+            "volunteer_email": request.email,
+            "volunteer_ph_num": request.ph_num,
+            "card": card,
+        }
+    except Exception as e:
+        logger.error(f"Take-up failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/incident/new")
+async def process_new_incident(request: IncidentNewRequest):
+    """
+    POST /incident/new
+    Start processing a new disaster incident.
+
+    [DEMO MODE] For now, this is a dummy endpoint.
+    In production, this would trigger Layer 1 (data verification)
+    to search for the incident and get verified data.
+
+    {
+        "incident_name": "us iran war 2026"
+    }
+    """
+    try:
+        incident_name = request.incident_name
+        logger.info(f"New incident request: {incident_name}")
+
+        # DEMO: Manually trigger Layer 1 data verification
+        logger.info(f"Triggering Layer 1 (Data Verification) for: {incident_name}")
+        agent_client = create_disaster_agent()
+        verified_incident = analyze_disaster(incident_name, agent_client)
+
+        logger.info(f"Layer 1 returned incident: {verified_incident.get('incident_id')}")
+
+        # Process through Layer 2
+        result = process_incident(verified_incident)
+
+        return {
+            "status": "processing_complete",
+            "incident_name": incident_name,
+            "incident_id": verified_incident.get("incident_id"),
+            "allocation_summary": result,
+            "verified_incident": verified_incident,
+        }
+    except Exception as e:
+        logger.error(f"Incident processing failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "service": "Disaster Relief Unified Backend",
+        "version": "1.0.0",
+    }

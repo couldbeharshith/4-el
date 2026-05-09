@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import os
-from rss_fetcher import fetch_rss_feeds
+from .rss_fetcher import fetch_rss_feeds
 
 logger = logging.getLogger("TOOLS")
 

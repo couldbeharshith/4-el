@@ -6,8 +6,8 @@ import re
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
-from tools import fetch_combined_disaster_news, format_articles_for_analysis
-from tool_definitions import (
+from .tools import fetch_combined_disaster_news, format_articles_for_analysis
+from .tool_definitions import (
     get_verified_news_tool_definition,
     execute_verified_news_tool,
     format_verified_news_as_json
