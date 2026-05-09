@@ -12,7 +12,7 @@ from .tool_definitions import (
     execute_verified_news_tool,
     format_verified_news_as_json
 )
-
+from .allocator_config import GEMINI_MODEL
 
 # Configure logging
 logging.basicConfig(
@@ -118,7 +118,7 @@ TASK: Analyze this incident data and call the verified_news tool to report your 
     
     try:
         response = agent_client.models.generate_content(
-            model="gemini-flash-latest",
+            model=GEMINI_MODEL,
             contents=analysis_prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,

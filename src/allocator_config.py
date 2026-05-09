@@ -14,7 +14,7 @@ APPROVAL_THRESHOLDS: dict[str, int] = {
 }
 
 # ── Gemini model ────────────────────────────────────────────────────────────
-GEMINI_MODEL = "gemini-flash-latest"
+GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 # ── Tool declarations for Gemini function-calling ───────────────────────────
 TOOL_DECLARATIONS = [
