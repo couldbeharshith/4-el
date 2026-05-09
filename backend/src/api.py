@@ -249,7 +249,7 @@ async def decide_need_card(request: NeedCardDecisionRequest):
 
 
 @app.post("/need-cards/take-up")
-async def take_up_need_card(request: NeedCardTakeUpRequest):
+async def handle_take_up_need_card(request: NeedCardTakeUpRequest):
     """
     POST /need-cards/take-up
     Volunteer takes up a need-card and commits to fulfill it.

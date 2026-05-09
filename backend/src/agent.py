@@ -106,7 +106,7 @@ NEWS DATA:
 
 TASK: Analyze this incident data and call the verified_news tool to report your findings. Be concise and accurate."""
     
-    logger.info("Sending data to Gemini for analysis (model: gemini-flash-latest)...")
+    logger.info(f"Sending data to Gemini for analysis (model: {GEMINI_MODEL})...")
     analysis_start = datetime.now()
     print("Analyzing incident...")
     
