@@ -1,136 +1,44 @@
 import os
 import sys
+import json
+import logging
+import re
+from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from tools import fetch_combined_disaster_news, format_articles_for_analysis
+from tool_definitions import (
+    get_verified_news_tool_definition,
+    execute_verified_news_tool,
+    format_verified_news_as_json
+)
 
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("AGENT")
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    print("ERROR: GEMINI_API_KEY not found in .env file")
+    logger.error("GEMINI_API_KEY not found in .env file")
     print("Please create a .env file with your API keys (see .env.example)")
     sys.exit(1)
 
+logger.info("Initializing Gemini client...")
 client = genai.Client(api_key=GEMINI_API_KEY)
+logger.info("Gemini client initialized successfully")
 
 
-SYSTEM_PROMPT = """You are a HIGHLY SPECIALIZED GLOBAL CRISIS ANALYST and REAL-TIME INTELLIGENCE AGGREGATOR.
+SYSTEM_PROMPT = """You are a CRISIS ANALYST. Analyze the incident data provided and call the verified_news tool to report your findings.
 
-Your core mission is to provide ACCURATE, TIMELY, and COMPREHENSIVE analysis of global disasters and crises using the latest available news data from GDELT and EXA sources.
+Be accurate. Use only information from the provided sources. Rate severity on a 1-10 scale where 1=minor, 10=catastrophic.
 
-
-
-YOUR EXPERTISE DOMAINS:
-━━━━━━━━━━━━━━━━━━━━━━━
-• Armed Conflicts & Wars: Assess military escalations, casualties, strategic implications, humanitarian impacts
-• Natural Disasters: Analyze earthquakes, floods, hurricanes, wildfires, tsunamis - their scope and consequences
-• Pandemics & Health Emergencies: Track disease spread, healthcare system impacts, mortality rates
-• Political Crises: Evaluate political instability, coups, government collapses, civil unrest
-• Environmental Catastrophes: Assess climate-related disasters, pollution events, resource depletion
-• Economic Collapses: Analyze market crashes, currency crises, inflation, financial system failures
-• Infrastructure Failures: Evaluate bridge collapses, dam failures, nuclear incidents, transportation disasters
-
-═══════════════════════════════════════════════════════════════════════════════
-
-YOUR ANALYSIS METHODOLOGY:
-━━━━━━━━━━━━━━━━━━━━━━━
-1. SOURCE VERIFICATION: Cross-reference information from multiple sources (GDELT + EXA)
-2. TEMPORAL ANALYSIS: Identify trends, escalations, and patterns over time
-3. GEOGRAPHIC ASSESSMENT: Analyze spatial distribution, affected regions, potential spillover effects
-4. IMPACT QUANTIFICATION: Provide concrete numbers on casualties, displaced persons, economic loss, etc.
-5. STAKEHOLDER ANALYSIS: Identify major actors, their interests, and likely next moves
-6. RISK ASSESSMENT: Evaluate humanitarian, strategic, environmental, and economic risks
-7. PREDICTION: Forecast likely outcomes based on current trajectory and historical precedent
-
-═══════════════════════════════════════════════════════════════════════════════
-
-RESPONSE STRUCTURE (MANDATORY):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Always structure your response as follows:
-
-📊 EXECUTIVE SUMMARY
-  • Current Status (1-2 sentences capturing the essence)
-  • Severity Level: [CRITICAL/HIGH/MEDIUM/LOW]
-  • Key Numbers: [Casualties, displaced, affected population, etc.]
-
-🌍 GEOGRAPHIC SCOPE
-  • Primary Affected Region
-  • Secondary Affected Regions
-  • Estimated Affected Population
-
-⏱️ TIMELINE & ESCALATION
-  • Origin/Start Date
-  • Key Events (with dates)
-  • Current Escalation Status
-  • Trend (Escalating/Stabilizing/Improving)
-
-🔴 IMMEDIATE IMPACTS
-  • Humanitarian Impact (casualties, injuries, displaced)
-  • Economic Impact (estimated losses, infrastructure damage)
-  • Environmental Impact (if applicable)
-  • Geopolitical Impact (regional implications)
-
-🎯 KEY ACTORS & INTERESTS
-  • Primary Actors
-  • International Response
-  • Humanitarian Organizations Involved
-
-📈 ANALYSIS & ASSESSMENT
-  • Root Causes
-  • Current Situation Assessment
-  • Major Risks & Cascading Effects
-  • Comparison to Historical Precedent
-
-🔮 OUTLOOK & PREDICTIONS
-  • Most Likely Scenario (Next 7-14 days)
-  • Best Case Scenario
-  • Worst Case Scenario
-  • Critical Monitoring Points
-
-🔗 INFORMATION SOURCES
-  • Number of sources analyzed
-  • Geographic distribution of reporting
-  • Data recency (how recent are the articles)
-  • Source reliability assessment
-
-═══════════════════════════════════════════════════════════════════════════════
-
-CRITICAL PRINCIPLES:
-━━━━━━━━━━━━━━━━━
-✓ BE PRECISE: Use specific numbers, dates, and locations. Avoid vague language.
-✓ BE BALANCED: Present multiple perspectives and acknowledge uncertainty
-✓ BE UPDATED: Only use the latest information from GDELT and EXA sources
-✓ BE ACTIONABLE: Provide insights that matter to decision-makers
-✓ BE HONEST: Clearly state confidence levels and data gaps
-✓ BE TIMELY: Emphasize how recent the information is
-✓ BE GLOBAL: Consider international dimensions and spillover effects
-✓ FACT-CHECK: Cross-verify key claims across multiple sources
-✓ BE COMPREHENSIVE: Don't oversimplify complex situations
-✓ PRIORITIZE HUMAN IMPACT: Lead with humanitarian considerations
-
-═══════════════════════════════════════════════════════════════════════════════
-
-DATA QUALITY GUIDANCE:
-━━━━━━━━━━━━━━━━━━
-If you notice contradictory information across sources:
-  • Identify the discrepancy explicitly
-  • Indicate which sources align
-  • Provide a confidence-weighted assessment
-  • Flag for further investigation
-
-If data is sparse or outdated:
-  • Clearly state this limitation
-  • Provide last available confirmed information
-  • Recommend alternative monitoring
-
-═══════════════════════════════════════════════════════════════════════════════
-
-REMEMBER: You have access to REAL-TIME global news data. Use it responsibly to provide 
-accurate, actionable intelligence that helps understand global crises and their impacts.
-
-Every fact should be traceable to a source in the provided data. Every claim should be 
-defensible with evidence."""
+Always call the verified_news tool with your analysis. Do not generate JSON text - use the tool function calling."""
 
 
 def create_disaster_agent():
@@ -143,94 +51,169 @@ def create_disaster_agent():
     return client
 
 
-def analyze_disaster(disaster_query: str, agent_client) -> str:
+def analyze_disaster(disaster_query: str, agent_client) -> dict:
     """
-    Analyze a disaster using the AI agent with real-time news data.
+    Analyze a disaster and return structured incident report(s).
     
     Args:
         disaster_query: User's query about a disaster (e.g., "us iran war")
         agent_client: Configured Gemini client instance
     
     Returns:
-        AI-generated analysis of the disaster
+        Dictionary with verified incident report, or list of reports if multiple tool calls
     """
+    logger.info(f"Processing query: '{disaster_query}'")
     print()
     
     # Fetch the latest news
-    print("Fetching latest news from GDELT and EXA...")
+    logger.info("Starting news fetch from GDELT, EXA, and RSS sources...")
+    fetch_start = datetime.now()
     combined_data = fetch_combined_disaster_news(disaster_query)
+    fetch_duration = (datetime.now() - fetch_start).total_seconds()
+    
+    # Log detailed fetch results
+    gdelt_count = len(combined_data.get("gdelt_data", {}).get("articles", []))
+    exa_count = len(combined_data.get("exa_data", {}).get("articles", []))
+    rss_count = len(combined_data.get("rss_data", {}).get("articles", []))
+    total_count = combined_data.get("combined_article_count", 0)
+    
+    logger.info(f"News fetch completed in {fetch_duration:.2f}s")
+    logger.info(f"GDELT results: {gdelt_count} articles")
+    logger.info(f"EXA results: {exa_count} articles")
+    logger.info(f"RSS results: {rss_count} articles")
+    logger.info(f"Total articles for analysis: {total_count}")
     
     # Check if we found any articles
-    article_count = combined_data.get("combined_article_count", 0)
-    if article_count == 0:
+    if total_count == 0:
+        logger.warning("No articles found from any source - results may be limited")
         print("Warning: No articles found. Results may be limited.")
     else:
-        print(f"Found {article_count} articles for analysis")
+        print(f"Found {total_count} articles ({gdelt_count} GDELT, {exa_count} EXA, {rss_count} RSS)")
     
     # Format articles for analysis
+    logger.debug("Formatting articles for AI analysis...")
     formatted_articles = format_articles_for_analysis(combined_data)
     
     # Create the analysis prompt
-    analysis_prompt = f"""DISASTER ANALYSIS REQUEST
-Query: {disaster_query}
-Time of Analysis: {combined_data['timestamp']}
-Data Sources: GDELT + EXA
+    analysis_prompt = f"""INCIDENT DATA ANALYSIS
 
-LATEST NEWS DATA:
+Query: {disaster_query}
+Time: {combined_data['timestamp']}
+Sources: GDELT + EXA + RSS
+
+NEWS DATA:
 {formatted_articles}
 
-TASK: Provide a comprehensive, real-time analysis of this disaster using the above news sources.
-Follow the mandatory response structure. Be specific, data-driven, and actionable.
-Cross-reference information across sources. Flag contradictions or data gaps."""
+TASK: Analyze this incident data and call the verified_news tool to report your findings. Be concise and accurate."""
     
-    print("Generating analysis...")
+    logger.info("Sending data to Gemini for analysis (model: gemini-flash-latest)...")
+    analysis_start = datetime.now()
+    print("Analyzing incident...")
     
-    # Generate analysis with system prompt
+    # Get the tool definition
+    tool = get_verified_news_tool_definition()
+    
+    # Generate analysis with tool calling
     from google.genai import types
     
-    response = agent_client.models.generate_content(
-        model="gemini-flash-latest",
-        contents=analysis_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.7,
-            max_output_tokens=4000,
-            top_p=0.95,
-            top_k=40,
-        ),
-    )
+    try:
+        response = agent_client.models.generate_content(
+            model="gemini-flash-latest",
+            contents=analysis_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[tool],
+                temperature=0.7,
+                max_output_tokens=4000,
+                top_p=0.95,
+                top_k=40,
+            ),
+        )
+        
+        analysis_duration = (datetime.now() - analysis_start).total_seconds()
+        logger.info(f"Response received from Gemini in {analysis_duration:.2f}s")
+        
+        # Handle response safely
+        if response is None:
+            logger.error("No response received from Gemini API")
+            raise ValueError("No response received from Gemini API")
+        
+        # Extract tool calls from response
+        if not hasattr(response, 'candidates') or not response.candidates:
+            logger.error("No candidates in Gemini response")
+            raise ValueError("No candidates in Gemini response")
+        
+        candidate = response.candidates[0]
+        if not hasattr(candidate, 'content') or not candidate.content:
+            logger.error("No content in candidate")
+            raise ValueError("No content in candidate")
+        
+        # Look for function calls in parts
+        tool_calls = []
+        for part in candidate.content.parts:
+            if hasattr(part, 'function_call') and part.function_call:
+                tool_calls.append(part.function_call)
+        
+        if not tool_calls:
+            logger.warning("No tool calls found in response")
+            logger.debug(f"Response content: {candidate.content}")
+            return {"error": "Model did not call verified_news tool"}
+        
+        logger.info(f"Found {len(tool_calls)} tool call(s) from Gemini")
+        
+        # Execute all tool calls and aggregate results
+        verified_reports = []
+        for i, func_call in enumerate(tool_calls, 1):
+            logger.info(f"Processing tool call {i}/{len(tool_calls)}: {func_call.name}")
+            
+            if func_call.name == "verified_news":
+                # Convert function call args to dict
+                tool_args = {k: v for k, v in func_call.args.items()}
+                logger.debug(f"Tool args: {tool_args}")
+                
+                # Execute the tool
+                verified_report = execute_verified_news_tool(tool_args)
+                verified_reports.append(verified_report)
+                logger.info(f"Tool call {i} executed successfully")
+        
+        logger.info(f"Analysis completed: {len(verified_reports)} incident(s) reported")
+        
+        # Return single report or list depending on count
+        if len(verified_reports) == 1:
+            return verified_reports[0]
+        elif len(verified_reports) > 1:
+            return {"incidents": verified_reports, "timestamp": datetime.now().isoformat()}
+        else:
+            return {"error": "No incidents extracted from tool calls"}
     
-    # Handle response safely
-    if response is None:
-        raise ValueError("No response received from Gemini API")
-    
-    if not hasattr(response, 'text'):
-        raise ValueError(f"Unexpected response format: {type(response)}")
-    
-    if response.text is None:
-        raise ValueError("API returned empty response")
-    
-    return response.text
+    except Exception as e:
+        logger.error(f"Error during analysis generation: {str(e)}", exc_info=True)
+        raise
 
 
 def main():
     """Main entry point for the disaster analysis agent."""
-    print("Global Disaster News Analysis Agent")
-    print("Powered by Google Gemini 3.1 Flash + GDELT + EXA")
+    logger.info("=" * 80)
+    logger.info("GLOBAL DISASTER NEWS ANALYSIS AGENT - Starting")
+    logger.info("Powered by Google Gemini 3.1 Flash + GDELT + EXA + RSS")
+    logger.info("=" * 80)
+    
     print()
-    print("Enter a disaster query to get comprehensive analysis.")
-    print("Examples: 'us iran war', 'turkey earthquake', 'pakistan floods'")
+    print("Global Disaster News Analysis Agent")
     print()
     
     # Create the agent
     agent_client = create_disaster_agent()
+    logger.info("Agent ready for queries")
     
     # Interactive loop
+    query_count = 0
     while True:
         try:
             disaster_query = input("Enter query (or 'quit' to exit): ").strip()
             
             if disaster_query.lower() in ['quit', 'exit', 'q']:
+                logger.info("Agent shutdown requested")
                 print("Shutting down.")
                 break
             
@@ -238,29 +221,42 @@ def main():
                 print("Please enter a valid query.")
                 continue
             
-            print()
-            # Analyze the disaster
-            analysis = analyze_disaster(disaster_query, agent_client)
+            query_count += 1
+            logger.info("=" * 80)
+            logger.info(f"QUERY #{query_count}: {disaster_query}")
+            logger.info("=" * 80)
             
             print()
+            # Analyze the disaster and get verified report
+            verified_report = analyze_disaster(disaster_query, agent_client)
+            
+            # Display verified report as JSON only
             print("="*80)
-            print("ANALYSIS RESULTS")
+            print("VERIFIED INCIDENT REPORT")
             print("="*80)
             print()
-            print(analysis)
+            report_json = format_verified_news_as_json(verified_report)
+            print(report_json)
+            logger.info(f"Report JSON:\n{report_json}")
             print()
             print("="*80)
             print()
             
         except KeyboardInterrupt:
+            logger.info("Agent interrupted by user")
             print()
             print("Interrupted. Exiting.")
             break
         except Exception as e:
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
             print(f"Error: {str(e)}")
             import traceback
             traceback.print_exc()
             print()
+    
+    logger.info("=" * 80)
+    logger.info("Agent shutdown complete")
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":
