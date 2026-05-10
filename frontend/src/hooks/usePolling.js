@@ -10,13 +10,11 @@ import { useEffect, useRef, useCallback } from 'react';
  */
 export function usePolling(fetchFn, interval = 30000, enabled = true, deps = []) {
   const intervalRef = useRef(null);
+  const fetchFnRef = useRef(fetchFn);
 
-  const poll = useCallback(async () => {
-    try {
-      await fetchFn();
-    } catch (error) {
-      console.error('Polling error:', error);
-    }
+  // Update ref when fetchFn changes
+  useEffect(() => {
+    fetchFnRef.current = fetchFn;
   }, [fetchFn]);
 
   useEffect(() => {
@@ -26,15 +24,17 @@ export function usePolling(fetchFn, interval = 30000, enabled = true, deps = [])
     }
 
     // Poll immediately on mount
-    poll();
+    fetchFnRef.current();
 
     // Then set up interval polling
-    intervalRef.current = setInterval(poll, interval);
+    intervalRef.current = setInterval(() => {
+      fetchFnRef.current();
+    }, interval);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [poll, interval, enabled, ...deps]);
+  }, [interval, enabled, ...deps]);
 
-  return { poll, isPolling: enabled };
+  return { isPolling: enabled };
 }

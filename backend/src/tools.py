@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import os
+import feedparser
 from .rss_fetcher import fetch_rss_feeds
 
 logger = logging.getLogger("TOOLS")
@@ -184,7 +185,70 @@ def fetch_exa_news(disaster_query: str, num_results: int = 10) -> dict:
         }
 
 
-def fetch_combined_disaster_news(disaster_query: str) -> dict:
+def fetch_demo_rss_feed() -> dict:
+    """
+    Fetch from demo RSS feed at localhost:5000/feed.xml
+    
+    Returns:
+        Dictionary with same structure as fetch_rss_feeds output
+    """
+    logger.info("DEMO RSS: Fetching from localhost:5000/feed.xml")
+    try:
+        response = requests.get("http://localhost:5000/feed.xml", timeout=10)
+        response.raise_for_status()
+        
+        parsed = feedparser.parse(response.content)
+        
+        if parsed.bozo:
+            logger.warning(f"DEMO RSS: Feed has parsing issues - {parsed.bozo_exception}")
+        
+        articles = []
+        for entry in parsed.get('entries', []):
+            article = {
+                'title': entry.get('title', 'No title'),
+                'description': entry.get('summary', entry.get('description', 'No description'))[:300],
+                'url': entry.get('link', ''),
+                'published_date': entry.get('published', 'Unknown'),
+                'source_domain': 'Demo RSS',
+                'source_country': 'Demo',
+                'feed_source': 'DEMO_RSS',
+                'feed_id': 'demo_feed',
+                'language': 'en'
+            }
+            articles.append(article)
+        
+        logger.info(f"DEMO RSS: Fetched {len(articles)} articles")
+        
+        return {
+            "articles": articles,
+            "query": "demo",
+            "source": "DEMO_RSS",
+            "timestamp": datetime.now().isoformat(),
+            "article_count": len(articles),
+            "feeds_checked": 1,
+            "feeds_matched": 1,
+            "feeds_fetched": 1
+        }
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"DEMO RSS: Failed to fetch - {str(e)}")
+        return {
+            "error": f"Demo RSS fetch failed: {str(e)}",
+            "query": "demo",
+            "source": "DEMO_RSS",
+            "articles": [],
+        }
+    except Exception as e:
+        logger.error(f"DEMO RSS: Error parsing feed - {str(e)}")
+        return {
+            "error": f"Demo RSS parse failed: {str(e)}",
+            "query": "demo",
+            "source": "DEMO_RSS",
+            "articles": [],
+        }
+
+
+def fetch_combined_disaster_news(disaster_query: str, demo_mode: bool = False) -> dict:
     """
     Fetch news from GDELT, EXA, and RSS feeds for comprehensive real-time information.
     
@@ -193,20 +257,39 @@ def fetch_combined_disaster_news(disaster_query: str) -> dict:
     - EXA: Curated news search
     - RSS: Regional/country-specific feeds
     
+    In demo mode, only fetches from demo RSS feed at localhost:5000/feed.xml
+    
     Args:
         disaster_query: The disaster or crisis to search for (e.g., "us iran war")
+        demo_mode: If True, only fetch from demo RSS feed (localhost:5000/feed.xml)
     
     Returns:
         Dictionary containing:
-        - gdelt_data: Articles from GDELT API
-        - exa_data: Articles from EXA API
-        - rss_data: Articles from RSS feeds
+        - gdelt_data: Articles from GDELT API (empty in demo mode)
+        - exa_data: Articles from EXA API (empty in demo mode)
+        - rss_data: Articles from RSS feeds or demo RSS
         - combined_article_count: Total number of unique articles
         - timestamp: When the data was fetched
     """
-    logger.info(f"COMBINED FETCH: Starting parallel fetch from all sources for '{disaster_query}'")
+    logger.info(f"COMBINED FETCH: Starting fetch for '{disaster_query}' (demo_mode={demo_mode})")
     
-    # Fetch from all sources
+    if demo_mode:
+        logger.info("COMBINED FETCH: Demo mode enabled - fetching only from demo RSS feed")
+        rss_data = fetch_demo_rss_feed()
+        
+        return {
+            "gdelt_data": {"articles": [], "source": "GDELT", "article_count": 0},
+            "exa_data": {"articles": [], "source": "EXA", "article_count": 0},
+            "rss_data": rss_data,
+            "combined_article_count": len(rss_data.get("articles", [])),
+            "query": disaster_query,
+            "timestamp": datetime.now().isoformat(),
+            "sources_queried": ["DEMO_RSS"],
+            "demo_mode": True,
+        }
+    
+    # Real mode: Fetch from all sources
+    logger.info("COMBINED FETCH: Real mode - calling all sources")
     logger.info("COMBINED FETCH: Calling GDELT...")
     gdelt_data = fetch_gdelt_news(disaster_query, timespan="7d", max_records=50)
     
@@ -233,6 +316,7 @@ def fetch_combined_disaster_news(disaster_query: str) -> dict:
         "query": disaster_query,
         "timestamp": datetime.now().isoformat(),
         "sources_queried": ["GDELT", "EXA", "RSS"],
+        "demo_mode": False,
     }
 
 

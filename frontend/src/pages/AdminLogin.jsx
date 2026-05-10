@@ -12,7 +12,7 @@ export default function AdminLogin() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (pin === 'relief2026') {
+    if (pin === '123456') {
       localStorage.setItem('aria_pin', 'aria2026'); // Backward compatible with previous requests if needed
       localStorage.setItem('relief_auth', 'true');
       navigate('/admin');

@@ -32,8 +32,45 @@ def create_need_card(
     fulfilled: bool = False,
     done_by: str | None = None,
     pending_approval: bool = False,
+    demo_mode: bool = False,
 ) -> dict[str, Any]:
     """Create a new need-card in the database."""
+    
+    if demo_mode:
+        from ..demo_db import create_need_card_demo, create_incident_demo
+        import uuid
+        
+        # First, ensure the incident exists in demo DB
+        try:
+            create_incident_demo({
+                "incident_id": incident_id,
+                "incident_name": incident_id,
+                "incident_type": "disaster",
+                "location": "Unknown",
+                "title": f"Incident: {incident_id}",
+                "severity": 5,
+                "summary": "Auto-created incident for demo mode",
+                "status": "active"
+            })
+        except Exception as e:
+            # Incident might already exist, that's ok
+            logger.debug(f"Incident creation skipped: {e}")
+        
+        card_data = {
+            "id": str(uuid.uuid4()),
+            "incident_id": incident_id,
+            "type": card_type,
+            "item": item,
+            "qty": qty,
+            "note": note,
+            "explanation": explanation,
+            "done_by": done_by,
+            "fulfilled": fulfilled,
+            "pending_approval": pending_approval,
+            "show_pd": not pending_approval,
+        }
+        return create_need_card_demo(card_data)
+    
     client = _get_client()
 
     # First get the incidents UUID from incident_id string
@@ -62,8 +99,13 @@ def create_need_card(
     return result.data[0] if result.data else None
 
 
-def get_all_need_cards() -> list[dict[str, Any]]:
+def get_all_need_cards(demo_mode: bool = False) -> list[dict[str, Any]]:
     """Fetch all need-cards with incident details."""
+    
+    if demo_mode:
+        from ..demo_db import get_all_need_cards_demo
+        return get_all_need_cards_demo()
+    
     client = _get_client()
     result = (
         client.table("need_cards")
@@ -74,8 +116,14 @@ def get_all_need_cards() -> list[dict[str, Any]]:
     return result.data or []
 
 
-def get_need_cards_by_incident(incident_id: str) -> list[dict[str, Any]]:
+def get_need_cards_by_incident(incident_id: str, demo_mode: bool = False) -> list[dict[str, Any]]:
     """Fetch need-cards for a specific incident."""
+    
+    if demo_mode:
+        from ..demo_db import get_all_need_cards_demo
+        all_cards = get_all_need_cards_demo()
+        return [card for card in all_cards if card["incident_id"] == incident_id]
+    
     client = _get_client()
 
     incident = client.table("incidents").select("id").eq("incident_id", incident_id).execute()
@@ -93,8 +141,13 @@ def get_need_cards_by_incident(incident_id: str) -> list[dict[str, Any]]:
     return result.data or []
 
 
-def approve_need_card(card_id: str) -> dict[str, Any]:
+def approve_need_card(card_id: str, demo_mode: bool = False) -> dict[str, Any]:
     """Admin approves a need-card (sets pending_approval=false, show_pd=true)."""
+    
+    if demo_mode:
+        from ..demo_db import approve_need_card_demo
+        return approve_need_card_demo(card_id, approved=True)
+    
     client = _get_client()
     result = (
         client.table("need_cards")
@@ -106,8 +159,13 @@ def approve_need_card(card_id: str) -> dict[str, Any]:
     return result.data[0] if result.data else None
 
 
-def reject_need_card(card_id: str) -> dict[str, Any]:
+def reject_need_card(card_id: str, demo_mode: bool = False) -> dict[str, Any]:
     """Admin rejects a need-card (sets show_pd=false)."""
+    
+    if demo_mode:
+        from ..demo_db import approve_need_card_demo
+        return approve_need_card_demo(card_id, approved=False)
+    
     client = _get_client()
     result = (
         client.table("need_cards")
@@ -119,8 +177,13 @@ def reject_need_card(card_id: str) -> dict[str, Any]:
     return result.data[0] if result.data else None
 
 
-def take_up_need_card(card_id: str, volunteer_name: str) -> dict[str, Any]:
+def take_up_need_card(card_id: str, volunteer_name: str, demo_mode: bool = False) -> dict[str, Any]:
     """Volunteer takes up a need-card (fulfills it)."""
+    
+    if demo_mode:
+        from ..demo_db import take_up_need_card_demo
+        return take_up_need_card_demo(card_id, volunteer_name)
+    
     client = _get_client()
     result = (
         client.table("need_cards")

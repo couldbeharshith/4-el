@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Menu, X, LayoutDashboard, ListTodo, PlusCircle, History } from 'lucide-react';
+import { Menu, X, LayoutDashboard, History } from 'lucide-react';
 import { SystemStatusPanel } from '../components';
 import { api } from '../services/api';
 
@@ -34,7 +34,6 @@ export default function AdminLayout() {
 
   const navLinks = [
     { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/admin/new-incident', label: 'New Incident', icon: PlusCircle },
     { to: '/admin/audit-log', label: 'Audit Log', icon: History },
   ];
 

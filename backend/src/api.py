@@ -71,12 +71,33 @@ class NeedCardTakeUpRequest(BaseModel):
 
 class IncidentNewRequest(BaseModel):
     incident_name: str
+    demo_mode: bool = False
+
+
+# Global state
+_current_demo_mode = False
+
+
+def set_demo_mode(enabled: bool):
+    """Set the global demo mode state."""
+    global _current_demo_mode
+    _current_demo_mode = enabled
+    logger.info(f"Demo mode set to: {enabled}")
+
+
+def get_demo_mode() -> bool:
+    """Get the current demo mode state."""
+    return _current_demo_mode
 
 
 # ── Lifespan 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize on startup."""
+    # Initialize demo database
+    from .demo_db import init_demo_db
+    init_demo_db()
+    logger.info("Demo database initialized")
     logger.info("=" * 80)
     logger.info("DISASTER RELIEF UNIFIED BACKEND - STARTING")
     logger.info("=" * 80)
@@ -107,7 +128,7 @@ app.add_middleware(
 # ── Helper functions ─────────────────────────────────────────────────────────
 
 
-def process_incident(incident_json: dict) -> dict:
+def process_incident(incident_json: dict, demo_mode: bool = False) -> dict:
     """
     Process a single incident through Layer 1 + Layer 2.
 
@@ -122,7 +143,7 @@ def process_incident(incident_json: dict) -> dict:
     severity = incident_json.get("incident", {}).get("severity", 5)
     summary = incident_json.get("incident", {}).get("summary")
 
-    logger.info(f"Processing incident: {incident_id}")
+    logger.info(f"Processing incident: {incident_id} (demo_mode={demo_mode})")
 
     # 1. Create incident record
     try:
@@ -183,6 +204,7 @@ def process_incident(incident_json: dict) -> dict:
                 fulfilled=fulfilled,
                 done_by=done_by,
                 pending_approval=pending_approval,
+                demo_mode=demo_mode,
             )
             need_cards.append(card)
             logger.info(f"Created need-card: {card_type} × {qty}")
@@ -205,10 +227,12 @@ async def get_need_cards():
     """
     GET /need-cards
     Fetch all need-cards for the public dashboard.
+    Uses the current demo_mode state set by /incident/new endpoint.
     """
     try:
-        cards = get_all_need_cards()
-        logger.info(f"Fetched {len(cards)} need-cards")
+        demo_mode = get_demo_mode()
+        cards = get_all_need_cards(demo_mode=demo_mode)
+        logger.info(f"Fetched {len(cards)} need-cards (demo_mode={demo_mode})")
         return cards
     except Exception as e:
         logger.error(f"Failed to fetch need-cards: {e}")
@@ -227,8 +251,9 @@ async def decide_need_card(request: NeedCardDecisionRequest):
     }
     """
     try:
+        demo_mode = get_demo_mode()
         if request.approved:
-            card = approve_need_card(request.need_card_id)
+            card = approve_need_card(request.need_card_id, demo_mode=demo_mode)
             logger.info(f"Approved need-card: {request.need_card_id}")
             return {
                 "status": "approved",
@@ -236,7 +261,7 @@ async def decide_need_card(request: NeedCardDecisionRequest):
                 "card": card,
             }
         else:
-            card = reject_need_card(request.need_card_id)
+            card = reject_need_card(request.need_card_id, demo_mode=demo_mode)
             logger.info(f"Rejected need-card: {request.need_card_id}")
             return {
                 "status": "rejected",
@@ -262,7 +287,8 @@ async def handle_take_up_need_card(request: NeedCardTakeUpRequest):
     }
     """
     try:
-        card = take_up_need_card(request.id, request.name)
+        demo_mode = get_demo_mode()
+        card = take_up_need_card(request.id, request.name, demo_mode=demo_mode)
         logger.info(f"Volunteer {request.name} took up need-card {request.id}")
         return {
             "status": "taken_up",
@@ -283,27 +309,31 @@ async def process_new_incident(request: IncidentNewRequest):
     POST /incident/new
     Start processing a new disaster incident.
 
-    [DEMO MODE] For now, this is a dummy endpoint.
-    In production, this would trigger Layer 1 (data verification)
-    to search for the incident and get verified data.
+    Triggers Layer 1 (data verification) and Layer 2 (allocator).
 
     {
-        "incident_name": "us iran war 2026"
+        "incident_name": "us iran war 2026",
+        "demo_mode": false
     }
     """
     try:
         incident_name = request.incident_name
-        logger.info(f"New incident request: {incident_name}")
+        demo_mode = request.demo_mode
+        
+        # Set global demo mode
+        set_demo_mode(demo_mode)
+        
+        logger.info(f"New incident request: {incident_name} (demo_mode={demo_mode})")
 
-        # DEMO: Manually trigger Layer 1 data verification
+        # Trigger Layer 1 data verification
         logger.info(f"Triggering Layer 1 (Data Verification) for: {incident_name}")
         agent_client = create_disaster_agent()
-        verified_incident = analyze_disaster(incident_name, agent_client)
+        verified_incident = analyze_disaster(incident_name, agent_client, demo_mode=demo_mode)
 
         logger.info(f"Layer 1 returned incident: {verified_incident.get('incident_id')}")
 
         # Process through Layer 2
-        result = process_incident(verified_incident)
+        result = process_incident(verified_incident, demo_mode=demo_mode)
 
         return {
             "status": "processing_complete",
@@ -311,6 +341,7 @@ async def process_new_incident(request: IncidentNewRequest):
             "incident_id": verified_incident.get("incident_id"),
             "allocation_summary": result,
             "verified_incident": verified_incident,
+            "demo_mode": demo_mode,
         }
     except Exception as e:
         logger.error(f"Incident processing failed: {e}", exc_info=True)
@@ -324,4 +355,34 @@ async def health():
         "status": "healthy",
         "service": "Disaster Relief Unified Backend",
         "version": "1.0.0",
+    }
+
+
+@app.post("/demo/reset")
+async def reset_demo():
+    """
+    POST /demo/reset
+    Reset the demo database to initial state (clears all data).
+    """
+    try:
+        from .demo_db import reset_demo_db
+        reset_demo_db()
+        logger.info("Demo database reset via API")
+        return {
+            "status": "reset_complete",
+            "message": "Demo database has been reset"
+        }
+    except Exception as e:
+        logger.error(f"Failed to reset demo database: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/demo/status")
+async def get_demo_status():
+    """
+    GET /demo/status
+    Get the current demo mode status.
+    """
+    return {
+        "demo_mode_enabled": get_demo_mode()
     }

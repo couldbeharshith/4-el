@@ -51,24 +51,25 @@ def create_disaster_agent():
     return client
 
 
-def analyze_disaster(disaster_query: str, agent_client) -> dict:
+def analyze_disaster(disaster_query: str, agent_client, demo_mode: bool = False) -> dict:
     """
     Analyze a disaster and return structured incident report(s).
     
     Args:
         disaster_query: User's query about a disaster (e.g., "us iran war")
         agent_client: Configured Gemini client instance
+        demo_mode: If True, only fetch from demo RSS feed
     
     Returns:
         Dictionary with verified incident report, or list of reports if multiple tool calls
     """
-    logger.info(f"Processing query: '{disaster_query}'")
+    logger.info(f"Processing query: '{disaster_query}' (demo_mode={demo_mode})")
     print()
     
     # Fetch the latest news
-    logger.info("Starting news fetch from GDELT, EXA, and RSS sources...")
+    logger.info("Starting news fetch from sources...")
     fetch_start = datetime.now()
-    combined_data = fetch_combined_disaster_news(disaster_query)
+    combined_data = fetch_combined_disaster_news(disaster_query, demo_mode=demo_mode)
     fetch_duration = (datetime.now() - fetch_start).total_seconds()
     
     # Log detailed fetch results
@@ -99,7 +100,7 @@ def analyze_disaster(disaster_query: str, agent_client) -> dict:
 
 Query: {disaster_query}
 Time: {combined_data['timestamp']}
-Sources: GDELT + EXA + RSS
+Sources: {', '.join(combined_data.get('sources_queried', []))}
 
 NEWS DATA:
 {formatted_articles}

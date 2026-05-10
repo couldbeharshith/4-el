@@ -17,6 +17,7 @@ temp/
 .env
 
 .vscode
+.kiro
 
 # Logs
 logs
