@@ -36,6 +36,8 @@ logger.info("Gemini client initialized successfully")
 
 SYSTEM_PROMPT = """You are a CRISIS ANALYST. Analyze the incident data provided and call the verified_news tool to report your findings.
 
+IMPORTANT: You MUST call the verified_news tool for EACH distinct incident you find in the provided news data. Do not combine multiple incidents into one tool call.
+
 Be accurate. Use only information from the provided sources. Rate severity on a 1-10 scale where 1=minor, 10=catastrophic.
 
 Always call the verified_news tool with your analysis. Do not generate JSON text - use the tool function calling."""
@@ -51,7 +53,7 @@ def create_disaster_agent():
     return client
 
 
-def analyze_disaster(disaster_query: str, agent_client, demo_mode: bool = False) -> dict:
+def analyze_disaster(disaster_query: str, agent_client, demo_mode: bool = False, incident_name: str = None) -> dict:
     """
     Analyze a disaster and return structured incident report(s).
     
@@ -59,11 +61,12 @@ def analyze_disaster(disaster_query: str, agent_client, demo_mode: bool = False)
         disaster_query: User's query about a disaster (e.g., "us iran war")
         agent_client: Configured Gemini client instance
         demo_mode: If True, only fetch from demo RSS feed
+        incident_name: Optional incident name to generate consistent incident_id
     
     Returns:
         Dictionary with verified incident report, or list of reports if multiple tool calls
     """
-    logger.info(f"Processing query: '{disaster_query}' (demo_mode={demo_mode})")
+    logger.info(f"Processing query: '{disaster_query}' (demo_mode={demo_mode}, incident_name={incident_name})")
     print()
     
     # Fetch the latest news
@@ -101,11 +104,19 @@ def analyze_disaster(disaster_query: str, agent_client, demo_mode: bool = False)
 Query: {disaster_query}
 Time: {combined_data['timestamp']}
 Sources: {', '.join(combined_data.get('sources_queried', []))}
+{f'Incident Name: {incident_name}' if incident_name else ''}
 
 NEWS DATA:
 {formatted_articles}
 
-TASK: Analyze this incident data and call the verified_news tool to report your findings. Be concise and accurate."""
+TASK: Analyze this incident data and call the verified_news tool to report your findings.
+
+CRITICAL INSTRUCTIONS:
+1. Identify ALL distinct incidents in the news data
+2. For EACH incident, call the verified_news tool ONCE with complete details
+3. Do NOT combine multiple incidents into a single tool call
+4. Be concise and accurate
+{f'5. Use incident_id format based on incident name: {incident_name.upper().replace(" ", "_")}_' + datetime.now().strftime("%Y%m%d") if incident_name else ''}"""
     
     logger.info(f"Sending data to Gemini for analysis (model: {GEMINI_MODEL})...")
     analysis_start = datetime.now()

@@ -73,60 +73,9 @@ def init_demo_db():
     cursor.executescript(SCHEMA_SQL)
     logger.info("Created database schema")
     
-    # Load seed data
-    seed_file = Path(__file__).parent.parent / "demo_data" / "seed_incidents.json"
-    if seed_file.exists():
-        with open(seed_file, 'r') as f:
-            seed_data = json.load(f)
-        
-        # Insert incidents
-        for incident in seed_data.get("incidents", []):
-            cursor.execute("""
-                INSERT INTO incidents 
-                (incident_id, incident_name, incident_type, location, title, severity, summary, created_at, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                incident.get("incident_id"),
-                incident.get("incident_name"),
-                incident.get("incident_type"),
-                incident.get("location"),
-                incident.get("title"),
-                incident.get("severity"),
-                incident.get("summary"),
-                incident.get("created_at"),
-                incident.get("status"),
-                datetime.now().isoformat()
-            ))
-        
-        logger.info(f"Inserted {len(seed_data.get('incidents', []))} incidents")
-        
-        # Insert seed need cards
-        for card in seed_data.get("seed_need_cards", []):
-            cursor.execute("""
-                INSERT INTO need_cards
-                (id, incident_id, type, item, qty, note, explanation, done_by, fulfilled, pending_approval, show_pd, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                card.get("id"),
-                card.get("incident_id"),
-                card.get("type"),
-                card.get("item"),
-                card.get("qty"),
-                card.get("note"),
-                card.get("explanation"),
-                card.get("done_by"),
-                card.get("fulfilled", False),
-                card.get("pending_approval", False),
-                card.get("show_pd", True),
-                datetime.now().isoformat(),
-                datetime.now().isoformat()
-            ))
-        
-        logger.info(f"Inserted {len(seed_data.get('seed_need_cards', []))} seed need cards")
-    
     conn.commit()
     conn.close()
-    logger.info("Demo database initialized successfully")
+    logger.info("Demo database initialized successfully (no seed data)")
 
 
 def get_demo_connection():
@@ -302,18 +251,38 @@ def take_up_need_card_demo(need_card_id: str, name: str) -> dict:
 
 
 def create_incident_demo(incident_data: dict) -> dict:
-    """Create an incident in demo database."""
+    """Create an incident in demo database. If it already exists, return the existing one."""
     conn = get_demo_connection()
     cursor = conn.cursor()
     
+    incident_id = incident_data.get("incident_id")
+    
     try:
+        # Check if incident already exists
+        cursor.execute("SELECT * FROM incidents WHERE incident_id = ?", (incident_id,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            logger.info(f"Incident {incident_id} already exists in demo DB, returning existing record")
+            return {
+                "incident_id": existing["incident_id"],
+                "incident_name": existing["incident_name"],
+                "incident_type": existing["incident_type"],
+                "location": existing["location"],
+                "title": existing["title"],
+                "severity": existing["severity"],
+                "summary": existing["summary"],
+                "status": existing["status"],
+            }
+        
+        # Insert new incident
         cursor.execute("""
             INSERT INTO incidents
             (incident_id, incident_name, incident_type, location, title, severity, summary, created_at, status, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            incident_data.get("incident_id"),
-            incident_data.get("incident_name", incident_data.get("incident_id")),
+            incident_id,
+            incident_data.get("incident_name", incident_id),
             incident_data.get("incident_type"),
             incident_data.get("location"),
             incident_data.get("title"),
@@ -325,7 +294,7 @@ def create_incident_demo(incident_data: dict) -> dict:
         ))
         
         conn.commit()
-        logger.info(f"Created incident {incident_data.get('incident_id')} in demo DB")
+        logger.info(f"Created incident {incident_id} in demo DB")
         
         return {
             "incident_id": incident_data.get("incident_id"),

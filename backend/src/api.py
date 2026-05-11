@@ -329,19 +329,42 @@ async def process_new_incident(request: IncidentNewRequest):
         # Trigger Layer 1 data verification
         logger.info(f"Triggering Layer 1 (Data Verification) for: {incident_name}")
         agent_client = create_disaster_agent()
-        verified_incident = analyze_disaster(incident_name, agent_client, demo_mode=demo_mode)
+        verified_incident = analyze_disaster(incident_name, agent_client, demo_mode=demo_mode, incident_name=incident_name)
 
-        logger.info(f"Layer 1 returned incident: {verified_incident.get('incident_id')}")
+        logger.info(f"Layer 1 returned: {verified_incident}")
 
-        # Process through Layer 2
-        result = process_incident(verified_incident, demo_mode=demo_mode)
+        # Handle both single incident and multiple incidents
+        incidents_to_process = []
+        if isinstance(verified_incident, dict):
+            if "incidents" in verified_incident:
+                # Multiple incidents
+                incidents_to_process = verified_incident.get("incidents", [])
+            else:
+                # Single incident
+                incidents_to_process = [verified_incident]
+        
+        logger.info(f"Processing {len(incidents_to_process)} incident(s)")
+        
+        # Process all incidents through Layer 2
+        all_results = []
+        for incident in incidents_to_process:
+            try:
+                result = process_incident(incident, demo_mode=demo_mode)
+                all_results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to process incident {incident.get('incident_id')}: {e}")
+                # Continue with other incidents
+        
+        # Return the first incident's ID for the response
+        first_incident_id = incidents_to_process[0].get("incident_id") if incidents_to_process else "UNKNOWN"
 
         return {
             "status": "processing_complete",
             "incident_name": incident_name,
-            "incident_id": verified_incident.get("incident_id"),
-            "allocation_summary": result,
-            "verified_incident": verified_incident,
+            "incident_id": first_incident_id,
+            "incidents_processed": len(all_results),
+            "allocation_summary": all_results,
+            "verified_incidents": incidents_to_process,
             "demo_mode": demo_mode,
         }
     except Exception as e:

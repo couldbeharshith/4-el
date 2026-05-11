@@ -185,14 +185,21 @@ def fetch_exa_news(disaster_query: str, num_results: int = 10) -> dict:
         }
 
 
-def fetch_demo_rss_feed() -> dict:
+def fetch_demo_rss_feed(timespan: str = "7d") -> dict:
     """
     Fetch from demo RSS feed at localhost:5000/feed.xml
+    Filters articles by timestamp (last 7 days by default)
+    
+    Args:
+        timespan: Time period to fetch (e.g., "7d" for 7 days, "1d" for 1 day)
     
     Returns:
         Dictionary with same structure as fetch_rss_feeds output
     """
-    logger.info("DEMO RSS: Fetching from localhost:5000/feed.xml")
+    from datetime import timedelta
+    import email.utils
+    
+    logger.info(f"DEMO RSS: Fetching from localhost:5000/feed.xml (timespan={timespan})")
     try:
         response = requests.get("http://localhost:5000/feed.xml", timeout=10)
         response.raise_for_status()
@@ -202,8 +209,29 @@ def fetch_demo_rss_feed() -> dict:
         if parsed.bozo:
             logger.warning(f"DEMO RSS: Feed has parsing issues - {parsed.bozo_exception}")
         
+        # Parse timespan
+        days = int(timespan.replace('d', '')) if 'd' in timespan else 7
+        cutoff_time = datetime.now() - timedelta(days=days)
+        
         articles = []
         for entry in parsed.get('entries', []):
+            # Parse published date
+            pub_date_str = entry.get('published', '')
+            try:
+                if pub_date_str:
+                    # Try to parse RFC 2822 format
+                    pub_tuple = email.utils.parsedate_to_datetime(pub_date_str)
+                    pub_date = pub_tuple.replace(tzinfo=None)
+                else:
+                    pub_date = datetime.now()
+            except:
+                pub_date = datetime.now()
+            
+            # Filter by timespan
+            if pub_date < cutoff_time:
+                logger.debug(f"DEMO RSS: Skipping article from {pub_date} (before cutoff {cutoff_time})")
+                continue
+            
             article = {
                 'title': entry.get('title', 'No title'),
                 'description': entry.get('summary', entry.get('description', 'No description'))[:300],
@@ -217,7 +245,7 @@ def fetch_demo_rss_feed() -> dict:
             }
             articles.append(article)
         
-        logger.info(f"DEMO RSS: Fetched {len(articles)} articles")
+        logger.info(f"DEMO RSS: Fetched {len(articles)} articles (after filtering by {timespan})")
         
         return {
             "articles": articles,
