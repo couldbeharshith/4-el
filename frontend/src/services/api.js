@@ -440,8 +440,14 @@ const realApi = {
   },
 
   async getActivityFeed() {
-    // Activity feed is not exposed by backend, return empty
-    return { data: [], error: null };
+    try {
+      const res = await fetch(`${API_BASE_URL}/activity-feed`);
+      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+      const data = await res.json();
+      return { data, error: null };
+    } catch (error) {
+      return { data: [], error: error.message };
+    }
   }
 };
 
@@ -478,9 +484,6 @@ export const api = {
   },
 
   async getActivityFeed() {
-    if (getDemoMode()) {
-      return mockApi.getActivityFeed();
-    }
     return realApi.getActivityFeed();
   }
 };

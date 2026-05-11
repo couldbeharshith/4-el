@@ -374,3 +374,58 @@ def reset_demo_db():
         logger.info("Demo database reset complete - all data cleared")
     finally:
         conn.close()
+
+
+def get_activity_feed_demo() -> list:
+    """Get all activity feed items from demo database."""
+    conn = get_demo_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT * FROM activity_feed ORDER BY timestamp DESC")
+        rows = cursor.fetchall()
+        
+        items = []
+        for row in rows:
+            items.append({
+                "id": row["id"],
+                "type": row["type"],
+                "message": row["message"],
+                "timestamp": row["timestamp"],
+            })
+        
+        logger.info(f"Retrieved {len(items)} activity feed items from demo DB")
+        return items
+    finally:
+        conn.close()
+
+
+def add_activity_log_demo(activity_type: str, message: str) -> dict:
+    """Add an activity log entry to demo database."""
+    conn = get_demo_connection()
+    cursor = conn.cursor()
+    
+    try:
+        activity_id = f"log_{datetime.now().timestamp()}"
+        cursor.execute("""
+            INSERT INTO activity_feed
+            (id, type, message, timestamp)
+            VALUES (?, ?, ?, ?)
+        """, (
+            activity_id,
+            activity_type,
+            message,
+            datetime.now().isoformat()
+        ))
+        
+        conn.commit()
+        logger.debug(f"Added activity log: {activity_type} - {message}")
+        
+        return {
+            "id": activity_id,
+            "type": activity_type,
+            "message": message,
+            "timestamp": datetime.now().isoformat(),
+        }
+    finally:
+        conn.close()

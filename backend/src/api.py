@@ -154,6 +154,7 @@ def process_incident(incident_json: dict, demo_mode: bool = False) -> dict:
             title=title,
             severity=severity,
             summary=summary,
+            demo_mode=demo_mode,
         )
         logger.info(f"Incident record created: {incident_id}")
     except Exception as e:
@@ -386,3 +387,28 @@ async def get_demo_status():
     return {
         "demo_mode_enabled": get_demo_mode()
     }
+
+
+@app.get("/activity-feed")
+async def get_activity_feed():
+    """
+    GET /activity-feed
+    Get the activity feed (system logs).
+    In demo mode, returns logs from demo database.
+    In real mode, returns empty list (not implemented for Supabase).
+    """
+    try:
+        demo_mode = get_demo_mode()
+        
+        if demo_mode:
+            from .demo_db import get_activity_feed_demo
+            items = get_activity_feed_demo()
+            logger.info(f"Fetched {len(items)} activity feed items from demo DB")
+            return items
+        
+        # Real mode: activity feed not implemented yet
+        logger.info("Activity feed requested in real mode (not implemented)")
+        return []
+    except Exception as e:
+        logger.error(f"Failed to fetch activity feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

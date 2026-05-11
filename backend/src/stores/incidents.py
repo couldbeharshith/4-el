@@ -29,8 +29,23 @@ def create_incident(
     title: str | None = None,
     severity: int = 5,
     summary: str | None = None,
+    demo_mode: bool = False,
 ) -> dict[str, Any]:
     """Create a new incident record in the audit log."""
+    
+    if demo_mode:
+        from ..demo_db import create_incident_demo
+        return create_incident_demo({
+            "incident_id": incident_id,
+            "incident_name": incident_id,
+            "incident_type": incident_type,
+            "location": location,
+            "title": title,
+            "severity": severity,
+            "summary": summary,
+            "status": "active"
+        })
+    
     client = _get_client()
 
     data = {
@@ -50,14 +65,37 @@ def create_incident(
     except Exception as e:
         # If incident already exists, just return it
         logger.warning(f"Incident creation failed (may already exist): {e}")
-        existing = get_incident_by_id(incident_id)
+        existing = get_incident_by_id(incident_id, demo_mode=demo_mode)
         if existing:
             return existing
         raise
 
 
-def get_incident_by_id(incident_id: str) -> dict[str, Any] | None:
+def get_incident_by_id(incident_id: str, demo_mode: bool = False) -> dict[str, Any] | None:
     """Fetch an incident by its incident_id string."""
+    
+    if demo_mode:
+        from ..demo_db import get_demo_connection
+        conn = get_demo_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM incidents WHERE incident_id = ?", (incident_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "incident_id": row["incident_id"],
+                    "incident_name": row["incident_name"],
+                    "incident_type": row["incident_type"],
+                    "location": row["location"],
+                    "title": row["title"],
+                    "severity": row["severity"],
+                    "summary": row["summary"],
+                    "status": row["status"],
+                }
+            return None
+        finally:
+            conn.close()
+    
     client = _get_client()
     result = (
         client.table("incidents")
@@ -69,8 +107,24 @@ def get_incident_by_id(incident_id: str) -> dict[str, Any] | None:
     return result.data if result.data else None
 
 
-def update_incident(incident_id: str, **updates) -> dict[str, Any]:
+def update_incident(incident_id: str, demo_mode: bool = False, **updates) -> dict[str, Any]:
     """Update an incident record."""
+    
+    if demo_mode:
+        from ..demo_db import get_demo_connection
+        conn = get_demo_connection()
+        cursor = conn.cursor()
+        try:
+            # Build update query
+            set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+            values = list(updates.values()) + [incident_id]
+            cursor.execute(f"UPDATE incidents SET {set_clause} WHERE incident_id = ?", values)
+            conn.commit()
+            logger.info(f"Updated incident: {incident_id}")
+            return get_incident_by_id(incident_id, demo_mode=True)
+        finally:
+            conn.close()
+    
     client = _get_client()
     result = (
         client.table("incidents")
@@ -82,8 +136,32 @@ def update_incident(incident_id: str, **updates) -> dict[str, Any]:
     return result.data[0] if result.data else None
 
 
-def get_all_incidents() -> list[dict[str, Any]]:
+def get_all_incidents(demo_mode: bool = False) -> list[dict[str, Any]]:
     """Fetch all incident records."""
+    
+    if demo_mode:
+        from ..demo_db import get_demo_connection
+        conn = get_demo_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM incidents ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            incidents = []
+            for row in rows:
+                incidents.append({
+                    "incident_id": row["incident_id"],
+                    "incident_name": row["incident_name"],
+                    "incident_type": row["incident_type"],
+                    "location": row["location"],
+                    "title": row["title"],
+                    "severity": row["severity"],
+                    "summary": row["summary"],
+                    "status": row["status"],
+                })
+            return incidents
+        finally:
+            conn.close()
+    
     client = _get_client()
     result = (
         client.table("incidents")

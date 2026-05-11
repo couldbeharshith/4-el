@@ -27,6 +27,8 @@ export default function AdminDashboard() {
     await resetDemoDatabase();
     // Clear incident from localStorage
     clearIncident();
+    // Refresh data to show empty state
+    await loadData();
     // Navigate to setup
     navigate('/');
   };
@@ -34,7 +36,10 @@ export default function AdminDashboard() {
   // Fetch data from API
   const loadData = async () => {
     try {
-      const allRes = await api.getAllNeedCards();
+      const [allRes, feedRes] = await Promise.all([
+        api.getAllNeedCards(),
+        api.getActivityFeed()
+      ]);
 
       if (allRes.error) {
         setError(allRes.error);
@@ -54,6 +59,10 @@ export default function AdminDashboard() {
           open: allRes.data.filter(c => c.show_pd && !c.fulfilled).length
         });
         setError(null);
+      }
+      
+      if (feedRes.data) {
+        setFeedItems(feedRes.data);
       }
       
       setLoading(false);

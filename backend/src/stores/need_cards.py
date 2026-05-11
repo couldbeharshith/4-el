@@ -37,7 +37,7 @@ def create_need_card(
     """Create a new need-card in the database."""
     
     if demo_mode:
-        from ..demo_db import create_need_card_demo, create_incident_demo
+        from ..demo_db import create_need_card_demo, create_incident_demo, add_activity_log_demo
         import uuid
         
         # First, ensure the incident exists in demo DB
@@ -69,7 +69,12 @@ def create_need_card(
             "pending_approval": pending_approval,
             "show_pd": not pending_approval,
         }
-        return create_need_card_demo(card_data)
+        result = create_need_card_demo(card_data)
+        
+        # Log activity
+        add_activity_log_demo("system", f"Created need card: {card_type} × {qty} ({item})")
+        
+        return result
     
     client = _get_client()
 
@@ -145,8 +150,11 @@ def approve_need_card(card_id: str, demo_mode: bool = False) -> dict[str, Any]:
     """Admin approves a need-card (sets pending_approval=false, show_pd=true)."""
     
     if demo_mode:
-        from ..demo_db import approve_need_card_demo
-        return approve_need_card_demo(card_id, approved=True)
+        from ..demo_db import approve_need_card_demo, add_activity_log_demo
+        result = approve_need_card_demo(card_id, approved=True)
+        if result:
+            add_activity_log_demo("admin", f"Approved need card: {result.get('item')}")
+        return result
     
     client = _get_client()
     result = (
@@ -163,8 +171,11 @@ def reject_need_card(card_id: str, demo_mode: bool = False) -> dict[str, Any]:
     """Admin rejects a need-card (sets show_pd=false)."""
     
     if demo_mode:
-        from ..demo_db import approve_need_card_demo
-        return approve_need_card_demo(card_id, approved=False)
+        from ..demo_db import approve_need_card_demo, add_activity_log_demo
+        result = approve_need_card_demo(card_id, approved=False)
+        if result:
+            add_activity_log_demo("admin", f"Rejected need card: {result.get('item')}")
+        return result
     
     client = _get_client()
     result = (
@@ -181,8 +192,11 @@ def take_up_need_card(card_id: str, volunteer_name: str, demo_mode: bool = False
     """Volunteer takes up a need-card (fulfills it)."""
     
     if demo_mode:
-        from ..demo_db import take_up_need_card_demo
-        return take_up_need_card_demo(card_id, volunteer_name)
+        from ..demo_db import take_up_need_card_demo, add_activity_log_demo
+        result = take_up_need_card_demo(card_id, volunteer_name)
+        if result:
+            add_activity_log_demo("volunteer", f"{volunteer_name} took up: {result.get('item')}")
+        return result
     
     client = _get_client()
     result = (

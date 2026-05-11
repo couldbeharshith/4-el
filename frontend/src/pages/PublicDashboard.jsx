@@ -88,9 +88,9 @@ export default function PublicDashboard() {
   // Fetch data from API
   const fetchData = async () => {
     try {
-      const [allCardsRes] = await Promise.all([
+      const [allCardsRes, feedRes] = await Promise.all([
         api.getAllNeedCards(),
-        new Promise(resolve => setTimeout(resolve, 100)) // Stagger requests
+        api.getActivityFeed()
       ]);
 
       if (allCardsRes.error) {
@@ -103,6 +103,10 @@ export default function PublicDashboard() {
         setNeedCards(allCardsRes.data);
         setFulfilledCount(allCardsRes.data.filter(c => c.fulfilled).length);
         setError(null);
+      }
+      
+      if (feedRes.data) {
+        setFeedItems(feedRes.data);
       }
       
       setLoading(false);
